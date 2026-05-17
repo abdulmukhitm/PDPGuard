@@ -1,11 +1,21 @@
-import { useState } from 'react';
-import { Search, Shield, ShieldAlert, Activity, CheckCircle2, AlertTriangle, Loader2, Target, Globe, Server, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Shield, ShieldAlert, Activity, CheckCircle2, AlertTriangle, Loader2, Target, Globe, Server, ArrowRight, ChevronDown, History, CalendarDays } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Vulnerability {
   id: string;
   nama_celah: string;
   tingkat_risiko: string;
   status: string;
+  impact?: string;
+  remediation?: string;
+}
+
+interface ScanHistoryItem {
+  id: string;
+  targetUrl: string;
+  date: string;
+  outcome: 'Compliant' | 'Action Required' | 'Scan Failed';
 }
 
 export default function ScanTargetView() {
@@ -15,15 +25,64 @@ export default function ScanTargetView() {
   const [hasScanned, setHasScanned] = useState(false);
   const [scanResults, setScanResults] = useState<Vulnerability[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+  const { user, login } = useAuth();
+  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
+
+  useEffect(() => {
+    if (user?.email) {
+      const storedHistory = localStorage.getItem(`scanHistory_${user.email}`);
+      if (storedHistory) {
+        try {
+          setScanHistory(JSON.parse(storedHistory));
+        } catch (e) {
+          setScanHistory([]);
+        }
+      } else {
+        setScanHistory([]);
+      }
+    } else {
+      setScanHistory([]);
+    }
+  }, [user]);
+
+  const addHistoryItem = (newItem: ScanHistoryItem) => {
+    setScanHistory(prev => {
+      const updated = [newItem, ...prev];
+      if (user?.email) {
+        localStorage.setItem(`scanHistory_${user.email}`, JSON.stringify(updated));
+      }
+      return updated;
+    });
+  };
 
   const handleScan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetUrl.trim()) return;
+
+    if (!user) {
+      // Force user to login before scanning
+      try {
+        await login();
+      } catch (err) {
+        return; // Login cancelled or failed
+      }
+    }
     
     setIsScanning(true);
     setHasScanned(false);
     setErrorMsg(null);
+    setScanProgress(0);
+    setExpandedRowId(null);
     
+    const progressInterval = setInterval(() => {
+      setScanProgress((prev) => {
+        if (prev >= 90) return prev;
+        return prev + Math.floor(Math.random() * 15) + 5;
+      });
+    }, 400);
+
     try {
       const response = await fetch('http://localhost:8080/api/system/mode', {
         method: 'POST',
@@ -44,17 +103,58 @@ export default function ScanTargetView() {
         throw new Error('Invalid response format (expected JSON)');
       }
 
-      setScanResults(Array.isArray(data) ? data : data.vulnerabilities || []);
-      setHasScanned(true);
+      const results = Array.isArray(data) ? data : data.vulnerabilities || [];
+      setScanResults(results);
+      
+      clearInterval(progressInterval);
+      setScanProgress(100);
+      
+      setTimeout(() => {
+        setIsScanning(false);
+        setHasScanned(true);
+        const hasHigh = results.some((vuln: Vulnerability) => ['high', 'critical'].includes(vuln.tingkat_risiko.toLowerCase()));
+        addHistoryItem({
+            id: Date.now().toString(),
+            targetUrl: targetUrl,
+            date: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            outcome: hasHigh ? 'Action Required' : 'Compliant'
+        });
+      }, 500);
+
     } catch (error: any) {
-      if (error.name === 'TypeError' && error.message === 'Failed to fetch') {
-        setErrorMsg('Server unavailable. Please check if the backend is running.');
-      } else {
-        setErrorMsg(error.message || 'An unexpected error occurred while scanning.');
+      clearInterval(progressInterval);
+      
+      let emsg = 'An unexpected error occurred while scanning.';
+      
+      if (error instanceof Error) {
+        const errorText = error.message.toLowerCase();
+        if ((error.name === 'TypeError' && errorText.includes('failed to fetch')) || errorText.includes('unreachable') || errorText.includes('network')) {
+          emsg = 'Target Unreachable: Unable to connect to backend server or target. Please verify it is active and reachable from this network.';
+        } else if (errorText.includes('401') || errorText.includes('403') || errorText.includes('unauthorized') || errorText.includes('api key')) {
+          emsg = 'Invalid API Key: Access denied due to missing, invalid, or expired credentials.';
+        } else if (errorText.includes('404')) {
+          emsg = 'Target Not Found: The specified domain, IP, or API endpoint could not be located.';
+        } else if (errorText.includes('timeout')) {
+          emsg = 'Connection Timeout: The scan exceeded the maximum allowed time to respond.';
+        } else if (errorText.includes('500') || errorText.includes('502') || errorText.includes('503')) {
+          emsg = 'Backend Server Error: The scanner service encountered an internal error. Please try again later.';
+        } else if (errorText.includes('server returned error')) {
+          emsg = `Request Failed: ${error.message}.`;
+        } else {
+          emsg = error.message;
+        }
       }
-      setHasScanned(false);
-    } finally {
+
+      setErrorMsg(emsg);
       setIsScanning(false);
+      setHasScanned(false);
+      
+      addHistoryItem({
+          id: Date.now().toString(),
+          targetUrl: targetUrl,
+          date: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+          outcome: 'Scan Failed'
+      });
     }
   };
 
@@ -94,7 +194,7 @@ export default function ScanTargetView() {
   const highestRisk = getHighestRisk();
 
   return (
-    <div className="flex flex-col gap-8 h-full pb-8">
+    <div className="flex flex-col gap-8 min-h-full pb-8">
       {/* Target Input Section - Minimalist Dark / Glassmorphism */}
       <div className="relative overflow-hidden rounded-2xl bg-[#0B1121] border border-slate-800 p-8 sm:p-12 shadow-2xl">
         {/* Glow Effects */}
@@ -102,8 +202,8 @@ export default function ScanTargetView() {
         <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-indigo-500/20 blur-3xl rounded-full pointer-events-none"></div>
         
         <div className="relative z-10 flex flex-col items-center text-center max-w-3xl mx-auto">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50 text-slate-300 text-[10px] font-bold uppercase tracking-widest mb-6">
-            <Target className="w-3.5 h-3.5 text-blue-400" />
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50 text-slate-300 text-xs font-bold uppercase tracking-widest mb-6 shadow-sm">
+            <Target className="w-4 h-4 text-blue-400" />
             Vulnerability Scanner
           </div>
           
@@ -149,6 +249,11 @@ export default function ScanTargetView() {
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Scanning
                   </>
+                ) : !user ? (
+                  <>
+                    Sign In to Scan
+                    <ArrowRight className="w-4 h-4" />
+                  </>
                 ) : (
                   <>
                     Mulai Scan
@@ -156,6 +261,29 @@ export default function ScanTargetView() {
                   </>
                 )}
               </button>
+            </div>
+            
+            {/* Quick Select Targets */}
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
+              <span className="text-xs text-slate-400 font-bold mr-2 uppercase tracking-wider">Quick Select API:</span>
+              {[
+                { label: '/api/v1/nasabah', url: 'http://localhost:8080/api/v1/nasabah' },
+                { label: '/api/v1/loans', url: 'http://localhost:8080/api/v1/loans' },
+                { label: '/api/v1/admin/users', url: 'http://localhost:8080/api/v1/admin/users' },
+              ].map((item) => (
+                <button
+                  key={item.url}
+                  type="button"
+                  onClick={() => {
+                    setTargetUrl(item.url);
+                    setTargetType('API Endpoint');
+                  }}
+                  className="px-3.5 py-2 bg-slate-800/60 hover:bg-slate-700 border border-slate-700/80 text-blue-300 hover:text-blue-100 rounded-lg text-xs font-mono transition-all disabled:opacity-50 hover:shadow-md hover:shadow-blue-900/20"
+                  disabled={isScanning}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
           </form>
 
@@ -173,12 +301,18 @@ export default function ScanTargetView() {
 
       {/* Loading State */}
       {isScanning && (
-        <div className="flex flex-col items-center justify-center py-16 animate-in fade-in duration-500">
-          <div className="relative">
-            <div className="w-16 h-16 border-4 border-slate-100 rounded-full"></div>
-            <div className="w-16 h-16 border-4 border-blue-600 rounded-full border-t-transparent animate-spin absolute top-0 left-0"></div>
+        <div className="flex flex-col items-center justify-center py-16 animate-in fade-in duration-500 max-w-xl mx-auto w-full">
+          <div className="w-full bg-slate-200 rounded-full h-2.5 mb-6 overflow-hidden">
+            <div 
+              className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
+              style={{ width: `${scanProgress}%` }}
+            ></div>
           </div>
-          <p className="mt-6 text-sm font-bold text-slate-900 uppercase tracking-widest">Analyzing Target...</p>
+          <div className="flex items-center gap-3">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+            <span className="text-2xl font-bold text-slate-900">{scanProgress}%</span>
+          </div>
+          <p className="mt-4 text-sm font-bold text-slate-900 uppercase tracking-widest">Analyzing Target...</p>
           <p className="text-xs text-slate-500 mt-2">Checking for vulnerabilities and configuration issues</p>
         </div>
       )}
@@ -187,27 +321,27 @@ export default function ScanTargetView() {
       {hasScanned && !isScanning && (
         <div className="space-y-6 animate-in slide-in-from-bottom-4 fade-in duration-700">
           {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
               <div>
-                <p className="text-slate-500 text-[10px] font-bold mb-1 uppercase tracking-wider">Total Celah</p>
-                <h3 className="text-3xl font-bold text-slate-900">{scanResults.length}</h3>
+                <p className="text-slate-500 text-xs font-extrabold mb-1 uppercase tracking-widest">Total Celah</p>
+                <h3 className="text-4xl font-black text-slate-900">{scanResults.length}</h3>
               </div>
-              <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center">
-                <AlertTriangle className="w-6 h-6 text-slate-600" />
+              <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center shadow-inner">
+                <AlertTriangle className="w-7 h-7 text-slate-600" />
               </div>
             </div>
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
               <div>
-                <p className="text-slate-500 text-[10px] font-bold mb-1 uppercase tracking-wider">Tingkat Risiko Tertinggi</p>
-                <div className="flex items-center gap-2">
+                <p className="text-slate-500 text-xs font-extrabold mb-1 uppercase tracking-widest">Tingkat Risiko Tertinggi</p>
+                <div className="flex items-center gap-2.5">
                   {highestRisk !== 'None' && (
-                    <span className="relative flex h-3 w-3">
+                    <span className="relative flex h-3.5 w-3.5">
                       <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${getRiskDot(highestRisk)}`}></span>
-                      <span className={`relative inline-flex rounded-full h-3 w-3 ${getRiskDot(highestRisk)}`}></span>
+                      <span className={`relative inline-flex rounded-full h-3.5 w-3.5 ${getRiskDot(highestRisk)}`}></span>
                     </span>
                   )}
-                  <h3 className={`text-2xl font-bold uppercase ${
+                  <h3 className={`text-2xl font-black uppercase tracking-tight ${
                     ['critical', 'high'].includes(highestRisk.toLowerCase()) ? 'text-red-600' :
                     highestRisk.toLowerCase() === 'medium' ? 'text-amber-600' :
                     ['low', 'info'].includes(highestRisk.toLowerCase()) ? 'text-blue-600' :
@@ -217,13 +351,13 @@ export default function ScanTargetView() {
                   </h3>
                 </div>
               </div>
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-inner ${
                 ['critical', 'high'].includes(highestRisk.toLowerCase()) ? 'bg-red-50' :
                 highestRisk.toLowerCase() === 'medium' ? 'bg-amber-50' :
                 ['low', 'info'].includes(highestRisk.toLowerCase()) ? 'bg-blue-50' :
                 'bg-slate-50'
               }`}>
-                <ShieldAlert className={`w-6 h-6 ${
+                <ShieldAlert className={`w-7 h-7 ${
                   ['critical', 'high'].includes(highestRisk.toLowerCase()) ? 'text-red-500' :
                   highestRisk.toLowerCase() === 'medium' ? 'text-amber-500' :
                   ['low', 'info'].includes(highestRisk.toLowerCase()) ? 'text-blue-500' :
@@ -231,18 +365,18 @@ export default function ScanTargetView() {
                 }`} />
               </div>
             </div>
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
               <div>
-                <p className="text-slate-500 text-[10px] font-bold mb-1 uppercase tracking-wider">Status PDP Compliance</p>
-                <h3 className={`text-lg font-bold leading-tight ${hasHighRisk ? 'text-amber-600' : 'text-green-600'}`}>
+                <p className="text-slate-500 text-xs font-extrabold mb-1 uppercase tracking-widest">Status PDP Compliance</p>
+                <h3 className={`text-xl font-black leading-tight tracking-tight ${hasHighRisk ? 'text-amber-600' : 'text-green-600'}`}>
                   {hasHighRisk ? 'Action Required' : 'PDP Compliant'}
                 </h3>
               </div>
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${hasHighRisk ? 'bg-amber-50' : 'bg-green-50'}`}>
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-inner ${hasHighRisk ? 'bg-amber-50' : 'bg-green-50'}`}>
                 {hasHighRisk ? (
-                  <Shield className="w-6 h-6 text-amber-500" />
+                  <Shield className="w-7 h-7 text-amber-500" />
                 ) : (
-                  <CheckCircle2 className="w-6 h-6 text-green-500" />
+                  <CheckCircle2 className="w-7 h-7 text-green-500" />
                 )}
               </div>
             </div>
@@ -250,52 +384,144 @@ export default function ScanTargetView() {
 
           {/* Detailed Results Table */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900">Detail Hasil Scan</h3>
-              <span className="text-[10px] px-2.5 py-1 bg-slate-100 text-slate-600 font-bold rounded-md uppercase tracking-wider">{targetUrl}</span>
+            <div className="p-5 md:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <h3 className="text-base font-extrabold text-slate-900">Detail Hasil Scan</h3>
+              <span className="text-xs px-3 py-1.5 bg-slate-100 text-slate-600 font-bold rounded-md uppercase tracking-wider self-start sm:self-auto truncate max-w-full">{targetUrl}</span>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-50/50 text-[10px] uppercase text-slate-500 font-bold border-b border-slate-100">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead className="bg-slate-50/50 text-xs uppercase text-slate-500 font-extrabold border-b border-slate-100 tracking-wider">
                   <tr>
-                    <th className="px-5 py-4 w-28">ID</th>
-                    <th className="px-5 py-4">Nama Celah</th>
-                    <th className="px-5 py-4 w-32">Tingkat Risiko</th>
-                    <th className="px-5 py-4 w-48">Status Compliance</th>
-                    <th className="px-5 py-4 w-36">Status</th>
+                    <th className="px-6 py-4 w-28">ID</th>
+                    <th className="px-6 py-4">Nama Celah</th>
+                    <th className="px-6 py-4 w-36">Tingkat Risiko</th>
+                    <th className="px-6 py-4 w-56">Status Compliance</th>
+                    <th className="px-6 py-4 w-40 text-right">Status</th>
                   </tr>
                 </thead>
-                <tbody className="text-xs divide-y divide-slate-100">
+                <tbody className="text-sm divide-y divide-slate-100">
                   {scanResults.map((vuln) => (
-                    <tr key={vuln.id} className="hover:bg-slate-50/80 transition-colors group">
-                      <td className="px-5 py-4 font-mono font-bold text-slate-500">{vuln.id}</td>
-                      <td className="px-5 py-4 font-bold text-slate-900">{vuln.nama_celah}</td>
-                      <td className="px-5 py-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold uppercase border ${getRiskColor(vuln.tingkat_risiko)}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${getRiskDot(vuln.tingkat_risiko)}`}></span>
-                          {vuln.tingkat_risiko}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4">
-                        {['high', 'critical'].includes(vuln.tingkat_risiko.toLowerCase()) ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase rounded text-red-700 bg-red-100 border border-red-200">
-                            Pelanggaran PDP (Pasal 46)
+                    <React.Fragment key={vuln.id}>
+                      <tr 
+                        className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
+                        onClick={() => setExpandedRowId(expandedRowId === vuln.id ? null : vuln.id)}
+                      >
+                        <td className="px-6 py-5 font-mono font-bold text-slate-500 flex items-center gap-3">
+                          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${expandedRowId === vuln.id ? 'rotate-180' : ''}`} />
+                          {vuln.id}
+                        </td>
+                        <td className="px-6 py-5 font-bold text-slate-900">{vuln.nama_celah}</td>
+                        <td className="px-6 py-5">
+                          <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-extrabold uppercase tracking-wide border ${getRiskColor(vuln.tingkat_risiko)}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${getRiskDot(vuln.tingkat_risiko)}`}></span>
+                            {vuln.tingkat_risiko}
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase rounded text-green-700 bg-green-100 border border-green-200">
-                            PDP Compliant
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="font-bold text-slate-600 uppercase tracking-wider text-[10px]">{vuln.status}</span>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="px-6 py-5">
+                          {['high', 'critical'].includes(vuln.tingkat_risiko.toLowerCase()) ? (
+                            <span className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-extrabold uppercase tracking-wide rounded-md text-red-700 bg-red-100 border border-red-200">
+                              Pelanggaran PDP (Pasal 46)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-extrabold uppercase tracking-wide rounded-md text-green-700 bg-green-100 border border-green-200">
+                              PDP Compliant
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-5 text-right">
+                          <span className="font-extrabold text-slate-600 uppercase tracking-widest text-xs px-2.5 py-1 bg-slate-100 rounded-md">{vuln.status}</span>
+                        </td>
+                      </tr>
+                      {expandedRowId === vuln.id && (
+                        <tr className="bg-slate-50/80">
+                          <td colSpan={5} className="px-6 py-6 border-b border-slate-200">
+                            <div className="grid md:grid-cols-2 gap-8 text-slate-700 max-w-5xl">
+                              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                <h4 className="font-extrabold text-slate-900 mb-3 flex items-center gap-2 uppercase tracking-widest text-xs">
+                                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                                  Potential Impact
+                                </h4>
+                                <p className="leading-relaxed text-sm text-slate-600">
+                                  {vuln.impact || 'If exploited, this vulnerability could lead to unauthorized data access, potentially compromising sensitive user information and violating data protection regulations.'}
+                                </p>
+                              </div>
+                              <div className="bg-white p-5 rounded-xl border border-blue-100 shadow-sm">
+                                <h4 className="font-extrabold text-slate-900 mb-3 flex items-center gap-2 uppercase tracking-widest text-xs">
+                                  <Shield className="w-4 h-4 text-blue-500" />
+                                  Remediation Steps
+                                </h4>
+                                <p className="leading-relaxed text-sm text-slate-600">
+                                  {vuln.remediation || 'Apply the latest security patches, adhere to secure coding guidelines, and ensure configurations follow the principle of least privilege.'}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
             </div>
           </div>
+        </div>
+      )}
+      {/* Scan History Section */}
+      {user ? (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col mt-4">
+          <div className="p-5 md:p-6 border-b border-slate-100 flex items-center gap-3">
+            <History className="w-5 h-5 text-slate-500" />
+            <h3 className="text-base font-extrabold text-slate-900">Recent Scans History</h3>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {scanHistory.length > 0 ? scanHistory.map((history) => (
+              <div key={history.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition-colors">
+                <div className="flex items-start sm:items-center gap-4">
+                  <div className={`mt-1 sm:mt-0 p-2.5 rounded-lg shadow-inner shrink-0 ${
+                    history.outcome === 'Compliant' ? 'bg-green-50 text-green-600' :
+                    history.outcome === 'Action Required' ? 'bg-amber-50 text-amber-600' :
+                    'bg-red-50 text-red-600'
+                  }`}>
+                    {history.outcome === 'Compliant' ? <CheckCircle2 className="w-5 h-5" /> : 
+                     history.outcome === 'Action Required' ? <AlertTriangle className="w-5 h-5" /> :
+                     <ShieldAlert className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 mb-1">{history.targetUrl}</h4>
+                    <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+                      <CalendarDays className="w-3.5 h-3.5" />
+                      <span>{history.date}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className={`self-start sm:self-auto inline-flex items-center px-3 py-1.5 rounded-md text-xs font-extrabold uppercase tracking-wide border ${
+                  history.outcome === 'Compliant' ? 'bg-green-100 border-green-200 text-green-700' :
+                  history.outcome === 'Action Required' ? 'bg-amber-100 border-amber-200 text-amber-700' :
+                  'bg-red-100 border-red-200 text-red-700'
+                }`}>
+                  {history.outcome}
+                </div>
+              </div>
+            )) : (
+              <div className="p-8 text-center text-slate-500 text-sm">
+                No recent scans found. Start by entering a target above.
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col mt-4 p-8 text-center bg-slate-50/50">
+          <History className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+          <h3 className="text-sm font-extrabold text-slate-900 mb-2">Scan History</h3>
+          <p className="text-xs text-slate-500 max-w-sm mx-auto mb-5">
+            Sign in to view your past scan results, track compliance over time, and access detailed historical reports.
+          </p>
+          <button 
+            onClick={login}
+            className="inline-flex mx-auto items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition-all shadow-md shadow-blue-900/20"
+          >
+             Sign In to View History
+          </button>
         </div>
       )}
     </div>
