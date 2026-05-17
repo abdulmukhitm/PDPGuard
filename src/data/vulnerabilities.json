@@ -1,0 +1,32 @@
+[
+  {
+    "id": "VULN-001",
+    "nama_celah": "SQL Injection pada endpoint login",
+    "tingkat_risiko": "High",
+    "status": "Open"
+  },
+  {
+    "id": "VULN-002",
+    "nama_celah": "Cross-Site Scripting (XSS) pada kolom komentar",
+    "tingkat_risiko": "High",
+    "status": "In Progress"
+  },
+  {
+    "id": "VULN-003",
+    "nama_celah": "Header keamanan (Content-Security-Policy) tidak ada",
+    "tingkat_risiko": "Low",
+    "status": "Open"
+  },
+  {
+    "id": "VULN-004",
+    "nama_celah": "Versi TLS/SSL usang",
+    "tingkat_risiko": "High",
+    "status": "Resolved"
+  },
+  {
+    "id": "VULN-005",
+    "nama_celah": "Informasi server terekspos (Server Token)",
+    "tingkat_risiko": "Low",
+    "status": "Open"
+  }
+]
