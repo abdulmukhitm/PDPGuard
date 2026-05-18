@@ -212,7 +212,7 @@ export default function App() {
         <main className="flex-1 overflow-auto p-4 sm:p-8">
           <div className="w-full min-h-full max-w-7xl mx-auto">
             {activeView === 'dashboard' && <DashboardView onScanClick={() => setActiveView('scan')} />}
-            {activeView === 'scan' && <ScanTargetView />}
+            {activeView === 'scan' && <ScanTargetView onReportClick={() => setActiveView('compliance')} />}
             {activeView === 'compliance' && <ComplianceReportView />}
           </div>
         </main>
