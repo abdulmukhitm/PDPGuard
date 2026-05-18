@@ -389,20 +389,24 @@ export default function ScanTargetView({ onReportClick }: ScanTargetViewProps) {
 
       {/* Scan Results */}
       {hasScanned && !isScanning && (
-        <div className="space-y-6 animate-in slide-in-from-bottom-4 fade-in duration-700">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-extrabold text-slate-900">Hasil Scan</h2>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-700">
+          <div className="border-b border-slate-100 bg-slate-50/50 p-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-blue-600" />
+              <h2 className="text-base font-extrabold text-slate-800 uppercase tracking-widest">Hasil Scan</h2>
+            </div>
             <button
               onClick={() => setHasScanned(false)}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm font-bold text-slate-500 hover:text-slate-900 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 shadow-sm transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-900 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 shadow-sm transition-colors uppercase tracking-wider"
             >
-              <X className="w-4 h-4" />
-              Tutup Hasil
+              <X className="w-3.5 h-3.5" />
+              Tutup
             </button>
           </div>
-
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          
+          <div className="p-4 sm:p-6 space-y-6">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
               <div>
                 <p className="text-slate-500 text-xs font-extrabold mb-1 uppercase tracking-widest">Total Celah</p>
@@ -561,6 +565,7 @@ export default function ScanTargetView({ onReportClick }: ScanTargetViewProps) {
               </div>
             )}
           </div>
+        </div>
         </div>
       )}
       {/* Scan History Section */}
