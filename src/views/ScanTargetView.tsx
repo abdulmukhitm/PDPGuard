@@ -149,28 +149,8 @@ export default function ScanTargetView({ onReportClick }: ScanTargetViewProps) {
           results = data;
         }
       } catch (backendError) {
-        console.warn('Backend fetch failed, using mock data for UI testing', backendError);
-        // Simulate a delay for the UI test
-        await new Promise(resolve => setTimeout(resolve, 2500));
-        
-        results = [
-          {
-            id: 'API1:2023',
-            nama_celah: 'Broken Object Level Authorization',
-            tingkat_risiko: 'High',
-            status: 'Vulnerable',
-            impact: 'Penyerang dapat memanipulasi ID objek untuk mengakses data pengguna lain.',
-            remediation: 'Implementasikan mekanisme otorisasi yang valid pada tingkat objek untuk setiap akses data.'
-          },
-          {
-            id: 'API3:2023',
-            nama_celah: 'Broken Object Property Level Authorization',
-            tingkat_risiko: 'Medium',
-            status: 'Vulnerable',
-            impact: 'Pengguna dapat mengakses properti objek sensitif yang seharusnya tidak dapat dijangkau.',
-            remediation: 'Izinkan akses hanya ke properti tertentu berdasarkan peran (role-based) dengan memvalidasi skema (schema validation).'
-          }
-        ];
+        console.error('Backend fetch failed:', backendError);
+        throw backendError;
       }
 
       setScanResults(results);
